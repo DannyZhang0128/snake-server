@@ -3,3 +3,4 @@ build/
 .vscode/
 node_modules/
 server/server
+server/sim
