@@ -1,20 +1,75 @@
-#include "App.h"
-#include <iostream>
 
-struct PerSocketData {};
+#include "App.h"
+#include "world.h"
+#include <chrono>
+#include <cstdio>
+
+constexpr int kTickHz = 20;
+constexpr float kDt = 1.0f / kTickHz;
+
+// Data attached to each connection.
+struct PerSocketData {
+    uint32_t snakeId = 0;
+};
+
+// Shared game state. The timer callback is a plain C function pointer and
+// can't capture variables, so the state lives at file scope.
+struct Game {
+    World world;
+    uint64_t tickCount = 0;
+    double sumMs = 0.0, maxMs = 0.0;
+} game;
+
+// Runs every 1000/kTickHz ms on the event loop's thread.
+static void onTick(struct us_timer_t *) {
+    using clock = std::chrono::steady_clock;
+    auto t0 = clock::now();
+
+    game.world.tick(kDt);
+
+    double ms = std::chrono::duration<double, std::milli>(clock::now() - t0).count();
+    game.sumMs += ms;
+    game.maxMs = std::max(game.maxMs, ms);
+    ++game.tickCount;
+
+    if (game.tickCount % kTickHz == 0) {
+        std::printf("tick %6llu | snakes %zu | food %zu | avg %.3f ms | max %.3f ms\n",
+                    static_cast<unsigned long long>(game.tickCount),
+                    game.world.snakes().size(), game.world.food().size(),
+                    game.sumMs / kTickHz, game.maxMs);
+        game.sumMs = 0.0;
+        game.maxMs = 0.0;
+    }
+}
 
 int main() {
-    uWS::App().ws<PerSocketData>("/*", {
+    uWS::App app;
+
+    app.ws<PerSocketData>("/*", {
         .open = [](auto *ws) {
-            std::cout << "client connected\n";
+            auto *data = ws->getUserData();
+            data->snakeId = game.world.addSnake();
+            std::printf("player %u joined (%zu snakes)\n",
+                        data->snakeId, game.world.snakes().size());
         },
-        .message = [](auto *ws, std::string_view msg, uWS::OpCode op) {
-            ws->send(msg, op);   // echo it back
+        .message = [](auto *, std::string_view, uWS::OpCode) {
+            // Input handling comes in the next step.
         },
-        .close = [](auto *ws, int code, std::string_view reason) {
-            std::cout << "client disconnected\n";
+        .close = [](auto *ws, int, std::string_view) {
+            auto *data = ws->getUserData();
+            game.world.removeSnake(data->snakeId);
+            std::printf("player %u left (%zu snakes)\n",
+                        data->snakeId, game.world.snakes().size());
         }
-    }).listen(9001, [](auto *token) {
-        std::cout << (token ? "listening on 9001\n" : "failed to listen\n");
-    }).run();
+    });
+
+    // Create the repeating tick timer on the same event loop as the sockets.
+    struct us_timer_t *timer = us_create_timer((struct us_loop_t *) uWS::Loop::get(), 0, 0);
+    us_timer_set(timer, onTick, 1000 / kTickHz, 1000 / kTickHz);
+
+    app.listen(9001, [](auto *token) {
+        std::printf(token ? "listening on 9001\n" : "failed to listen\n");
+    });
+
+    app.run();
 }
