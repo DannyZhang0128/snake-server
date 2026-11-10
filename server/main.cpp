@@ -7,20 +7,20 @@
 constexpr int kTickHz = 20;
 constexpr float kDt = 1.0f / kTickHz;
 
-// Data attached to each connection.
+//data attached to each connection.
 struct PerSocketData {
     uint32_t snakeId = 0;
 };
 
-// Shared game state. The timer callback is a plain C function pointer and
-// can't capture variables, so the state lives at file scope.
+
 struct Game {
     World world;
     uint64_t tickCount = 0;
     double sumMs = 0.0, maxMs = 0.0;
-} game;
+} 
+Game game;
 
-// Runs every 1000/kTickHz ms on the event loop's thread.
+//runs every 1000/kTickHz ms
 static void onTick(struct us_timer_t *) {
     using clock = std::chrono::steady_clock;
     auto t0 = clock::now();
@@ -53,7 +53,7 @@ int main() {
                         data->snakeId, game.world.snakes().size());
         },
         .message = [](auto *, std::string_view, uWS::OpCode) {
-            // Input handling comes in the next step.
+            
         },
         .close = [](auto *ws, int, std::string_view) {
             auto *data = ws->getUserData();
@@ -63,7 +63,7 @@ int main() {
         }
     });
 
-    // Create the repeating tick timer on the same event loop as the sockets.
+    //repeating tick timer
     struct us_timer_t *timer = us_create_timer((struct us_loop_t *) uWS::Loop::get(), 0, 0);
     us_timer_set(timer, onTick, 1000 / kTickHz, 1000 / kTickHz);
 
