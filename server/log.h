@@ -1,13 +1,13 @@
 #pragma once
-//Minimal logger with timestamps. Errors go to stderr, everything else to stdout.
-//Log player ids, counts, and timings only. Never log raw client messages or
-//anything personal, since logs are often shared when debugging.
+// Minimal logger with timestamps. Errors go to stderr, everything else to stdout.
+// Log player ids, counts, and timings only. Never log raw client messages or
+// anything personal, since logs are often shared when debugging.
 
 #include <cstdarg>
 #include <cstdio>
 #include <ctime>
 
-enum class LogLevel : unsigned char {Info, Warn, Error};
+enum class LogLevel : unsigned char { Info, Warn, Error };
 
 inline void logMsg(LogLevel level, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
 

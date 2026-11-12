@@ -11,7 +11,7 @@
 #include "log.h"
 #include "world.h"
 
-//Data attached to each connection.
+// Data attached to each connection.
 struct PerSocketData {
     uint32_t snakeId = 0;
 };
@@ -25,7 +25,8 @@ struct Game {
     double sumMs = 0.0, maxMs = 0.0;
     size_t lastBytes = 0;
 };
-//Created once at startup; if this allocation fails we are out of memory and terminating is fine.
+// Created once at startup; if this allocation fails we are out of memory and terminating is fine.
+//  NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 Game game;
 
 template <class T>
@@ -35,7 +36,7 @@ static void appendNum(std::string &s, T v) {
     s.append(tmp, r.ptr);
 }
 
-//Appends "[x,y]" with the coordinates truncated to integers.
+// Appends "[x,y]" with the coordinates truncated to integers.
 static void appendPoint(std::string &out, float x, float y) {
     out += '[';
     appendNum(out, static_cast<int>(x));
@@ -44,7 +45,7 @@ static void appendPoint(std::string &out, float x, float y) {
     out += ']';
 }
 
-//Serialize the whole world as JSON.
+// Serialize the whole world as JSON.
 static void buildState(std::string &out, const World &w) {
     out.clear();
     out += "{\"t\":\"state\",\"snakes\":[";
@@ -58,8 +59,8 @@ static void buildState(std::string &out, const World &w) {
         out += ",\"len\":";
         appendNum(out, s.length);
         out += ",\"p\":[";
-        for(size_t i = 0; i < s.body.size(); ++i) {
-            if(i) out += ',';
+        for (size_t i = 0; i < s.body.size(); ++i) {
+            if (i) out += ',';
             appendPoint(out, s.body[i].x, s.body[i].y);
         }
         out += "]}";
@@ -67,38 +68,38 @@ static void buildState(std::string &out, const World &w) {
     out += "],\"food\":[";
     const auto &food = w.food();
     for (size_t i = 0; i < food.size(); ++i) {
-        if(i) out += ',';
+        if (i) out += ',';
         appendPoint(out, food[i].x, food[i].y);
     }
     out += "]}";
 }
 
-//Input format: "<angle>,<0|1>"
+// Input format: "<angle>,<0|1>"
 static bool parseInput(std::string_view msg, float &angle, bool &boost) {
-    if(msg.size() > kMaxInputBytes) return false;
+    if (msg.size() > kMaxInputBytes) return false;
     size_t comma = msg.find(',');
-    if(comma == std::string_view::npos || comma == 0) return false;
+    if (comma == std::string_view::npos || comma == 0) return false;
 
     const char *begin = msg.data();
     const char *end = msg.data() + comma;
     auto [ptr, ec] = std::from_chars(begin, end, angle);
-    if(ec != std::errc() || ptr != end) return false;  // not a clean number
-    if(!std::isfinite(angle) || std::fabs(angle) > kMaxAbsAngle) return false;  // NaN, inf, absurd
+    if (ec != std::errc() || ptr != end) return false;  // not a clean number
+    if (!std::isfinite(angle) || std::fabs(angle) > kMaxAbsAngle) return false;  // NaN, inf, absurd
 
     std::string_view flag = msg.substr(comma + 1);
-    if(flag != "0" && flag != "1") return false;
+    if (flag != "0" && flag != "1") return false;
     boost = (flag == "1");
     return true;
 }
 
-//Runs every kTickIntervalMs on the event loop's thread.
+// Runs every kTickIntervalMs on the event loop's thread.
 static void onTick(struct us_timer_t *) {
     using clock = std::chrono::steady_clock;
     auto t0 = clock::now();
 
     game.world.tick(kDt);
 
-    if(!game.world.snakes().empty()) {
+    if (!game.world.snakes().empty()) {
         buildState(game.buf, game.world);
         game.app->publish(kStateTopic, game.buf, uWS::OpCode::TEXT);  // one send to all subscribers
         game.lastBytes = game.buf.size();
@@ -147,11 +148,11 @@ int main() {
              },
          .message =
              [](auto *ws, std::string_view msg, uWS::OpCode op) {
-                 if(op != uWS::OpCode::TEXT) return;
+                 if (op != uWS::OpCode::TEXT) return;
                  float angle = 0.f;
                  bool boost = false;
                  if (!parseInput(msg, angle, boost)) {
-                     ++game.rejectedInputs;  //dropped, counted in the once-per-second stats line
+                     ++game.rejectedInputs;  // dropped, counted in the once-per-second stats line
                      return;
                  }
                  game.world.setInput(ws->getUserData()->snakeId, angle, boost);
@@ -167,10 +168,10 @@ int main() {
     struct us_timer_t *timer = us_create_timer((struct us_loop_t *)uWS::Loop::get(), 0, 0);
     us_timer_set(timer, onTick, kTickIntervalMs, kTickIntervalMs);
 
-    //LIBUS_LISTEN_EXCLUSIVE_PORT: by default uSockets sets SO_REUSEPORT on Linux, which lets a
-    //stale second server bind the same port and silently steal about half of the connections.
+    // LIBUS_LISTEN_EXCLUSIVE_PORT: by default uSockets sets SO_REUSEPORT on Linux, which lets a
+    // stale second server bind the same port and silently steal about half of the connections.
     app.listen(port, LIBUS_LISTEN_EXCLUSIVE_PORT, [port](auto *token) {
-        if(!token) {
+        if (!token) {
             logMsg(LogLevel::Error, "failed to listen on port %d (is it already in use?)", port);
             std::exit(1);
         }
