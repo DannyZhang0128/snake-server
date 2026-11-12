@@ -13,15 +13,18 @@ A realtime multiplayer, Slither.io-style browser game. An authoritative C++ serv
 
 ## Requirements
 
-Linux or WSL2. g++ 11+ with C++20, make, git, zlib headers, python3.
+Linux or WSL2. g++ 11+ with C++20, make, git, zlib headers, python3, Node 18+ for integration tests.
 
 ## Run it
 
-First terminal:
+First terminal, clone the submodule needed:
 
 ```bash
-git clone --recurse-submodules https://github.com/DannyZhang0128/snake-server
-cd snake-server/server
+git clone https://github.com/DannyZhang0128/snake-server
+cd snake-server
+git submodule update --init server/third_party/uWebSockets
+git -C server/third_party/uWebSockets submodule update --init uSockets
+cd server
 make
 ./server
 ```
@@ -41,6 +44,7 @@ Open http://localhost:8000. Steer with the mouse; hold the mouse button or Space
 | Variable | Default | Meaning |
 |---|---|---|
 | `PORT` | `9001` | Port the game server listens on. Example: `PORT=9002 ./server` |
+| `ALLOWED_ORIGINS` | `http://localhost:8000,http://127.0.0.1:8000` | Websites allowed to connect. Connections with no Origin header (bots, scripts) are always accepted. |
 
 The client connects to port 9001 unless you open it as `http://localhost:8000/?port=9002`. See `.env.example`.
 
@@ -54,6 +58,9 @@ server/config.h     Constants and environment settings
 server/log.h        Leveled logger
 server/sim_main.cpp Headless simulation for timing experiments
 server/Makefile     build, format, lint
+server/input.h      Input message parsing and validation
+server/origin.h     Origin allow-list check for WebSocket connections
+server/tests/       Unit tests (doctest) and integration tests (Node)
 ```
 
 ## Protocol (WebSocket, text frames)
@@ -76,8 +83,10 @@ browser <--JSON state----- publish <-- buildState <-- World::tick <-- timer (eve
 ## Development
 
 ```bash
-make format   # needs: sudo apt install -y clang-format clang-tidy
+make format        # needs: sudo apt install -y clang-format clang-tidy
 make lint
+make test          # integration tests, Node 18+
+make test-unit     
 make clean
 ```
 
