@@ -32,7 +32,11 @@ setInterval(() => {
 }, 1000);
 
 //---------- network ----------
-const ws = new WebSocket("ws://" + location.hostname + ":9001");
+//Server port: defaults to 9001, override with ex: http://localhost:8000/?port=9002
+const portParam = new URLSearchParams(location.search).get("port");
+const port = /^\d{1,5}$/.test(portParam || "") ? portParam : "9001";
+const ws = new WebSocket("ws://" + location.hostname + ":" + port);
+
 ws.onopen = () => {connected = true;};
 ws.onclose = () => {connected = false;};
 ws.onmessage = (e) => {
