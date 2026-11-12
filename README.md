@@ -39,6 +39,7 @@ Open http://localhost:8000. Steer with the mouse; hold the mouse button or Space
 ## Configuration
 
 | Variable | Default | Meaning |
+|---|---|---|
 | `PORT` | `9001` | Port the game server listens on. Example: `PORT=9002 ./server` |
 
 The client connects to port 9001 unless you open it as `http://localhost:8000/?port=9002`. See `.env.example`.
@@ -58,6 +59,7 @@ server/Makefile     build, format, lint
 ## Protocol (WebSocket, text frames)
 
 | Direction | Message | Meaning |
+|---|---|---|
 | client to server | `angle,boost` (e.g. `1.571,1`) | Desired heading in radians and boost flag |
 | server to client | `{"t":"welcome","id":1,"w":4000,"h":4000}` | Sent once on connect: your snake id and map size |
 | server to client | `{"t":"state","snakes":[...],"food":[...]}` | World state, sent every tick |
