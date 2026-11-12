@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <charconv>
 #include <chrono>
 #include <cmath>
@@ -5,10 +6,13 @@
 #include <cstdlib>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "App.h"
 #include "config.h"
+#include "input.h"
 #include "log.h"
+#include "origin.h"
 #include "world.h"
 
 // Data attached to each connection.
@@ -19,6 +23,7 @@ struct PerSocketData {
 struct Game {
     World world;
     uWS::App *app = nullptr;
+    std::vector<std::string> allowedOrigins;
     std::string buf;  // reused every tick to avoid reallocating
     uint64_t tickCount = 0;
     uint64_t rejectedInputs = 0;
@@ -26,7 +31,7 @@ struct Game {
     size_t lastBytes = 0;
 };
 // Created once at startup; if this allocation fails we are out of memory and terminating is fine.
-//  NOLINTNEXTLINE(bugprone-throwing-static-initialization)
+// NOLINTNEXTLINE(bugprone-throwing-static-initialization)
 Game game;
 
 template <class T>
@@ -74,24 +79,6 @@ static void buildState(std::string &out, const World &w) {
     out += "]}";
 }
 
-// Input format: "<angle>,<0|1>"
-static bool parseInput(std::string_view msg, float &angle, bool &boost) {
-    if (msg.size() > kMaxInputBytes) return false;
-    size_t comma = msg.find(',');
-    if (comma == std::string_view::npos || comma == 0) return false;
-
-    const char *begin = msg.data();
-    const char *end = msg.data() + comma;
-    auto [ptr, ec] = std::from_chars(begin, end, angle);
-    if (ec != std::errc() || ptr != end) return false;  // not a clean number
-    if (!std::isfinite(angle) || std::fabs(angle) > kMaxAbsAngle) return false;  // NaN, inf, absurd
-
-    std::string_view flag = msg.substr(comma + 1);
-    if (flag != "0" && flag != "1") return false;
-    boost = (flag == "1");
-    return true;
-}
-
 // Runs every kTickIntervalMs on the event loop's thread.
 static void onTick(struct us_timer_t *) {
     using clock = std::chrono::steady_clock;
@@ -123,6 +110,7 @@ static void onTick(struct us_timer_t *) {
 
 int main() {
     const int port = getPort();
+    game.allowedOrigins = getAllowedOrigins();
     uWS::App app;
     game.app = &app;
 
@@ -130,6 +118,21 @@ int main() {
         "/*",
         {.maxPayloadLength = kMaxPayloadBytes,
          .idleTimeout = kIdleTimeoutSec,
+         .upgrade =
+             [](auto *res, auto *req, auto *context) {
+                 std::string_view origin = req->getHeader("origin");
+                 if (!isOriginAllowed(origin, game.allowedOrigins)) {
+                     // Log at most 100 characters of the header.
+                     std::string shown(origin.substr(0, 100));
+                     logMsg(LogLevel::Warn, "rejected connection from origin '%s'", shown.c_str());
+                     res->writeStatus("403 Forbidden")->end("Origin not allowed");
+                     return;
+                 }
+                 res->template upgrade<PerSocketData>({}, req->getHeader("sec-websocket-key"),
+                                                      req->getHeader("sec-websocket-protocol"),
+                                                      req->getHeader("sec-websocket-extensions"),
+                                                      context);
+             },
          .open =
              [](auto *ws) {
                  auto *data = ws->getUserData();
@@ -152,7 +155,7 @@ int main() {
                  float angle = 0.f;
                  bool boost = false;
                  if (!parseInput(msg, angle, boost)) {
-                     ++game.rejectedInputs;  // dropped, counted in the once-per-second stats line
+                     ++game.rejectedInputs;  // dropped; counted in the once-per-second stats line
                      return;
                  }
                  game.world.setInput(ws->getUserData()->snakeId, angle, boost);
