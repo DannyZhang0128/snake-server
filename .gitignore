@@ -5,3 +5,4 @@ node_modules/
 server/server
 server/sim
 .env
+server/tests/unit_tests

@@ -1,0 +1,11 @@
+{
+  "name": "snake-server-integration-tests",
+  "private": true,
+  "description": "Starts the real server binary and talks to it over WebSocket.",
+  "scripts": {
+    "test": "node --test integration.test.js"
+  },
+  "devDependencies": {
+    "ws": "8.22.0"
+  }
+}
