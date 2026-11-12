@@ -36,10 +36,14 @@ public:
     static constexpr int kMinLength = 10;
     static constexpr size_t kFoodTarget = 2000;  // total number of food items in the world
 
-    explicit World(uint32_t seed = 1) : rng_(seed) {
-        food_.reserve(kFoodTarget);
+    explicit World(uint32_t seed = 1, size_t foodTarget = kFoodTarget)
+        : rng_(seed), foodTarget_(foodTarget) {
+        food_.reserve(foodTarget_);
         topUpFood();
     }
+
+    // Places one food item for tests
+    void spawnFood(point p) { food_.push_back(p); }
 
     uint32_t addSnake() {
         Snake s;
@@ -140,12 +144,13 @@ private:
 
     void topUpFood() {
         // randomly inserts food
-        while (food_.size() < kFoodTarget) {
+        while (food_.size() < foodTarget_) {
             food_.push_back({randRange(0.f, kWidth), randRange(0.f, kHeight)});
         }
     }
 
     std::mt19937 rng_;
+    size_t foodTarget_;
     std::vector<Snake> snakes_;
     std::vector<point> food_;
     uint32_t nextId_ = 1;
