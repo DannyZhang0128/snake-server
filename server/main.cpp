@@ -1,30 +1,31 @@
-
-#include "App.h"
-#include "world.h"
 #include <charconv>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <string_view>
 
-constexpr int kTickHz = 20;
-constexpr float kDt = 1.0f / kTickHz;
+#include "App.h"
+#include "config.h"
+#include "log.h"
+#include "world.h"
 
-//data attached to each connection.
+//Data attached to each connection.
 struct PerSocketData {
     uint32_t snakeId = 0;
 };
 
-
 struct Game {
     World world;
     uWS::App *app = nullptr;
-    std::string buf;                 //reused every tick to avoid reallocating
+    std::string buf;  // reused every tick to avoid reallocating
     uint64_t tickCount = 0;
+    uint64_t rejectedInputs = 0;
     double sumMs = 0.0, maxMs = 0.0;
     size_t lastBytes = 0;
 };
+//Created once at startup; if this allocation fails we are out of memory and terminating is fine.
 Game game;
 
 template <class T>
@@ -34,7 +35,16 @@ static void appendNum(std::string &s, T v) {
     s.append(tmp, r.ptr);
 }
 
-//serialize the whole world as JSON.
+//Appends "[x,y]" with the coordinates truncated to integers.
+static void appendPoint(std::string &out, float x, float y) {
+    out += '[';
+    appendNum(out, static_cast<int>(x));
+    out += ',';
+    appendNum(out, static_cast<int>(y));
+    out += ']';
+}
+
+//Serialize the whole world as JSON.
 static void buildState(std::string &out, const World &w) {
     out.clear();
     out += "{\"t\":\"state\",\"snakes\":[";
@@ -43,60 +53,54 @@ static void buildState(std::string &out, const World &w) {
         if (!s.alive) continue;
         if (!firstSnake) out += ',';
         firstSnake = false;
-        out += "{\"id\":";  appendNum(out, s.id);
-        out += ",\"len\":"; appendNum(out, s.length);
+        out += "{\"id\":";
+        appendNum(out, s.id);
+        out += ",\"len\":";
+        appendNum(out, s.length);
         out += ",\"p\":[";
-        for (size_t i = 0; i < s.body.size(); ++i) {
-            if (i) out += ',';
-            out += '[';
-            appendNum(out, static_cast<int>(s.body[i].x));
-            out += ',';
-            appendNum(out, static_cast<int>(s.body[i].y));
-            out += ']';
+        for(size_t i = 0; i < s.body.size(); ++i) {
+            if(i) out += ',';
+            appendPoint(out, s.body[i].x, s.body[i].y);
         }
         out += "]}";
     }
     out += "],\"food\":[";
     const auto &food = w.food();
     for (size_t i = 0; i < food.size(); ++i) {
-        if (i) out += ',';
-        out += '[';
-        appendNum(out, static_cast<int>(food[i].x));
-        out += ',';
-        appendNum(out, static_cast<int>(food[i].y));
-        out += ']';
+        if(i) out += ',';
+        appendPoint(out, food[i].x, food[i].y);
     }
     out += "]}";
 }
 
-//Input format: "<angle>,<0|1>" 
+//Input format: "<angle>,<0|1>"
 static bool parseInput(std::string_view msg, float &angle, bool &boost) {
-    if (msg.size() > 32) return false;
+    if(msg.size() > kMaxInputBytes) return false;
     size_t comma = msg.find(',');
-    if (comma == std::string_view::npos || comma == 0) return false;
+    if(comma == std::string_view::npos || comma == 0) return false;
 
     const char *begin = msg.data();
     const char *end = msg.data() + comma;
     auto [ptr, ec] = std::from_chars(begin, end, angle);
-    if (ec != std::errc() || ptr != end) return false;           // not a clean number
-    if (!std::isfinite(angle) || std::fabs(angle) > 10.f) return false;   // NaN, inf, absurd
+    if(ec != std::errc() || ptr != end) return false;  // not a clean number
+    if(!std::isfinite(angle) || std::fabs(angle) > kMaxAbsAngle) return false;  // NaN, inf, absurd
 
     std::string_view flag = msg.substr(comma + 1);
-    if (flag != "0" && flag != "1") return false;
+    if(flag != "0" && flag != "1") return false;
     boost = (flag == "1");
     return true;
 }
 
-//runs every 1000/kTickHz ms
+//Runs every kTickIntervalMs on the event loop's thread.
 static void onTick(struct us_timer_t *) {
     using clock = std::chrono::steady_clock;
     auto t0 = clock::now();
 
     game.world.tick(kDt);
 
-    if (!game.world.snakes().empty()) {
+    if(!game.world.snakes().empty()) {
         buildState(game.buf, game.world);
-        game.app->publish("state", game.buf, uWS::OpCode::TEXT);   //one send to all subscribers
+        game.app->publish(kStateTopic, game.buf, uWS::OpCode::TEXT);  // one send to all subscribers
         game.lastBytes = game.buf.size();
     }
 
@@ -106,54 +110,71 @@ static void onTick(struct us_timer_t *) {
     ++game.tickCount;
 
     if (game.tickCount % kTickHz == 0) {
-        std::printf("tick %6llu | snakes %zu | msg %zu B | avg %.3f ms | max %.3f ms\n",
-                    static_cast<unsigned long long>(game.tickCount),
-                    game.world.snakes().size(), game.lastBytes,
-                    game.sumMs / kTickHz, game.maxMs);
+        logMsg(LogLevel::Info,
+               "tick %llu | snakes %zu | msg %zu B | avg %.3f ms | max %.3f ms | rejected %llu",
+               static_cast<unsigned long long>(game.tickCount), game.world.snakes().size(),
+               game.lastBytes, game.sumMs / kTickHz, game.maxMs,
+               static_cast<unsigned long long>(game.rejectedInputs));
         game.sumMs = 0.0;
         game.maxMs = 0.0;
     }
 }
 
 int main() {
+    const int port = getPort();
     uWS::App app;
     game.app = &app;
 
-    app.ws<PerSocketData>("/*", {
-        .open = [](auto *ws) {
-            auto *data = ws->getUserData();
-            data->snakeId = game.world.addSnake();
-            ws->subscribe("state");
+    app.ws<PerSocketData>(
+        "/*",
+        {.maxPayloadLength = kMaxPayloadBytes,
+         .idleTimeout = kIdleTimeoutSec,
+         .open =
+             [](auto *ws) {
+                 auto *data = ws->getUserData();
+                 data->snakeId = game.world.addSnake();
+                 ws->subscribe(kStateTopic);
 
-            char hello[96];
-            int n = std::snprintf(hello, sizeof hello,
-                "{\"t\":\"welcome\",\"id\":%u,\"w\":%d,\"h\":%d}",
-                data->snakeId, static_cast<int>(World::kWidth), static_cast<int>(World::kHeight));
-            ws->send(std::string_view(hello, static_cast<size_t>(n)), uWS::OpCode::TEXT);
+                 char hello[96];
+                 int n = std::snprintf(hello, sizeof hello,
+                                       "{\"t\":\"welcome\",\"id\":%u,\"w\":%d,\"h\":%d}",
+                                       data->snakeId, static_cast<int>(World::kWidth),
+                                       static_cast<int>(World::kHeight));
+                 ws->send(std::string_view(hello, static_cast<size_t>(n)), uWS::OpCode::TEXT);
 
-            std::printf("player %u joined (%zu snakes)\n",
-                        data->snakeId, game.world.snakes().size());
-        },
-        .message = [](auto *ws, std::string_view msg, uWS::OpCode op) {
-            if (op != uWS::OpCode::TEXT) return;
-            float angle = 0.f;
-            bool boost = false;
-            if (!parseInput(msg, angle, boost)) return;   // silently drop bad input
-            game.world.setInput(ws->getUserData()->snakeId, angle, boost);
-        },
-        .close = [](auto *ws, int, std::string_view) {
-            auto *data = ws->getUserData();
-            game.world.removeSnake(data->snakeId);
-            std::printf("player %u left (%zu snakes)\n",
-                        data->snakeId, game.world.snakes().size());
+                 logMsg(LogLevel::Info, "player %u joined (%zu snakes)", data->snakeId,
+                        game.world.snakes().size());
+             },
+         .message =
+             [](auto *ws, std::string_view msg, uWS::OpCode op) {
+                 if(op != uWS::OpCode::TEXT) return;
+                 float angle = 0.f;
+                 bool boost = false;
+                 if (!parseInput(msg, angle, boost)) {
+                     ++game.rejectedInputs;  //dropped, counted in the once-per-second stats line
+                     return;
+                 }
+                 game.world.setInput(ws->getUserData()->snakeId, angle, boost);
+             },
+         .close =
+             [](auto *ws, int, std::string_view) {
+                 auto *data = ws->getUserData();
+                 game.world.removeSnake(data->snakeId);
+                 logMsg(LogLevel::Info, "player %u left (%zu snakes)", data->snakeId,
+                        game.world.snakes().size());
+             }});
+
+    struct us_timer_t *timer = us_create_timer((struct us_loop_t *)uWS::Loop::get(), 0, 0);
+    us_timer_set(timer, onTick, kTickIntervalMs, kTickIntervalMs);
+
+    //LIBUS_LISTEN_EXCLUSIVE_PORT: by default uSockets sets SO_REUSEPORT on Linux, which lets a
+    //stale second server bind the same port and silently steal about half of the connections.
+    app.listen(port, LIBUS_LISTEN_EXCLUSIVE_PORT, [port](auto *token) {
+        if(!token) {
+            logMsg(LogLevel::Error, "failed to listen on port %d (is it already in use?)", port);
+            std::exit(1);
         }
-    });
-
-    struct us_timer_t *timer = us_create_timer((struct us_loop_t *) uWS::Loop::get(), 0, 0);
-    us_timer_set(timer, onTick, 1000 / kTickHz, 1000 / kTickHz);
-
-    app.listen(9001, [](auto *token) {
-        std::printf(token ? "listening on 9001\n" : "failed to listen\n");
+        logMsg(LogLevel::Info, "listening on port %d", port);
     });
 
     app.run();
