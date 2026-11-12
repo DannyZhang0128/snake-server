@@ -1,18 +1,141 @@
 <!DOCTYPE html>
 <html>
+<head>
+<meta charset="utf-8">
+<title>Snake</title>
+<style>
+  html, body {margin: 0; height: 100%; overflow: hidden; background: #111;}
+  canvas {display: block;}
+</style>
+</head>
 <body>
+<canvas id="c"></canvas>
 <script>
-  const ws = new WebSocket("ws://localhost:9001");
-  let myId = null, n = 0;
-  ws.onopen = () => console.log("connected");
-  ws.onmessage = (e) => {
-    const m = JSON.parse(e.data);
-    if (m.t === "welcome") { myId = m.id; console.log("welcome", m); return; }
-    if (++n % 20 === 0) {            // log once per second
-      const me = m.snakes.find(s => s.id === myId);
-      console.log(`bytes=${e.data.length} len=${me.len} head=${me.p[0]}`);
-    }
-  };
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+
+function resize() {canvas.width = innerWidth; canvas.height = innerHeight;}
+addEventListener("resize", resize);
+resize();
+
+//---------- state ----------
+let myId = null;
+const world = {w: 4000, h: 4000};
+let state = null;  //latest "state" message from the server
+let connected = false;
+
+//receive-rate stats for the HUD
+let rxBytes = 0, rxMsgs = 0, rate = {kb: 0, msgs: 0};
+setInterval(() => {
+  rate = {kb: rxBytes / 1024, msgs: rxMsgs};
+  rxBytes = 0; rxMsgs = 0;
+}, 1000);
+
+//---------- network ----------
+const ws = new WebSocket("ws://" + location.hostname + ":9001");
+ws.onopen = () => {connected = true;};
+ws.onclose = () => {connected = false;};
+ws.onmessage = (e) => {
+  rxBytes += e.data.length;
+  rxMsgs++;
+  const m = JSON.parse(e.data);
+  if(m.t === "welcome") {
+    myId = m.id; world.w = m.w; world.h = m.h;
+  } 
+  else if(m.t === "state") {
+    state = m;
+  }
+};
+
+//---------- input ----------
+let angle = 0, boost = false;
+addEventListener("mousemove", (e) => {
+  //The player's snake is always drawn at the screen center,
+  //so the direction is just the mouse offset from the center.
+  angle = Math.atan2(e.clientY - canvas.height / 2, e.clientX - canvas.width / 2);
+});
+addEventListener("mousedown", () => {boost = true;});
+addEventListener("mouseup", () => {boost = false;});
+addEventListener("keydown", (e) => {if (e.code === "Space") { boost = true; e.preventDefault();}});
+addEventListener("keyup", (e) => {if (e.code === "Space") boost = false;});
+
+//send the current input 20 times per second
+setInterval(() => {
+  if(ws.readyState === WebSocket.OPEN) {
+    ws.send(angle.toFixed(3) + "," + (boost ? 1 : 0));
+  }
+}, 50);
+
+//---------- rendering ----------
+function hue(id) { return (id * 137) % 360; }
+
+function drawHud(me) {
+  ctx.fillStyle = "#fff";
+  ctx.font = "14px monospace";
+  const lines = [
+    connected ? "connected" : "DISCONNECTED",
+    me ? "length: " + me.len : "waiting for server...",
+    "rx: " + rate.msgs + " msg/s, " + rate.kb.toFixed(1) + " KB/s",
+  ];
+  lines.forEach((t, i) => ctx.fillText(t, 12, 20 + i * 18));
+}
+
+function draw() {
+  requestAnimationFrame(draw);
+  ctx.fillStyle = "#111";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const me = state && state.snakes.find((s) => s.id === myId);
+  if(!me) {drawHud(null); return;}
+
+  //Camera: keep our own head at the screen center.
+  const cx = me.p[0][0], cy = me.p[0][1];
+  const vx0 = cx - canvas.width / 2, vy0 = cy - canvas.height / 2;
+  const vx1 = vx0 + canvas.width,    vy1 = vy0 + canvas.height;
+
+  ctx.save();
+  ctx.translate(-vx0, -vy0);
+
+  //faint grid so movement is visible
+  const g = 100;
+  ctx.strokeStyle = "#1c1c1c";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for(let x = Math.floor(vx0 / g) * g; x <= vx1; x += g) { ctx.moveTo(x, vy0); ctx.lineTo(x, vy1); }
+  for(let y = Math.floor(vy0 / g) * g; y <= vy1; y += g) { ctx.moveTo(vx0, y); ctx.lineTo(vx1, y); }
+  ctx.stroke();
+
+  //map border
+  ctx.strokeStyle = "#c33";
+  ctx.lineWidth = 6;
+  ctx.strokeRect(0, 0, world.w, world.h);
+
+  //food on screen, drawn as one batched path
+  ctx.fillStyle = "#e8c547";
+  ctx.beginPath();
+  for(const [x, y] of state.food) {
+    if(x < vx0 || x > vx1 || y < vy0 || y > vy1) continue;
+    ctx.moveTo(x + 5, y);
+    ctx.arc(x, y, 5, 0, Math.PI * 2);
+  }
+  ctx.fill();
+
+  //snakes
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  for (const s of state.snakes) {
+    ctx.strokeStyle = "hsl(" + hue(s.id) + ", 70%, 55%)";
+    ctx.lineWidth = 16 + Math.min(s.len, 100) * 0.1;
+    ctx.beginPath();
+    ctx.moveTo(s.p[0][0], s.p[0][1]);
+    for (let i = 1; i < s.p.length; i++) ctx.lineTo(s.p[i][0], s.p[i][1]);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+  drawHud(me);
+}
+draw();
 </script>
 </body>
 </html>
