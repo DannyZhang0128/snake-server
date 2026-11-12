@@ -2,7 +2,7 @@
 // Origin checking for WebSocket connections.
 // Browsers attach an Origin header to every WebSocket handshake
 // so a malicious website could make a visitor's browser connect to our server.
-// We only accept origins on an allow-list. 
+// We only accept origins on an allow-list.
 
 #include <cstdlib>
 #include <string>
@@ -11,7 +11,7 @@
 
 #include "config.h"
 
-//Splits "a, b,c" into {"a", "b", "c"}
+// Splits "a, b,c" into {"a", "b", "c"}
 inline std::vector<std::string> parseOriginList(std::string_view csv) {
     std::vector<std::string> out;
     size_t pos = 0;
@@ -28,14 +28,14 @@ inline std::vector<std::string> parseOriginList(std::string_view csv) {
 }
 
 inline bool isOriginAllowed(std::string_view origin, const std::vector<std::string> &allowed) {
-    if (origin.empty()) return true;  //non-browser client
+    if (origin.empty()) return true;  // non-browser client
     for (const auto &a : allowed) {
         if (origin == a) return true;
     }
     return false;
 }
 
-//ALLOWED_ORIGINS if set, otherwise the default list.
+// ALLOWED_ORIGINS if set, otherwise the default list.
 inline std::vector<std::string> getAllowedOrigins() {
     const char *env = std::getenv("ALLOWED_ORIGINS");
     return parseOriginList(env ? std::string_view(env) : kDefaultAllowedOrigins);

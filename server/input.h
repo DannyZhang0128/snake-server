@@ -7,9 +7,9 @@
 
 #include "config.h"
 
-//Input format: "<angle>,<0|1>" 
-//Returns true and fills angle/boost only if the whole message is valid.
-//On failure the outputs are left untouched.
+// Input format: "<angle>,<0|1>"
+// Returns true and fills angle/boost only if the whole message is valid.
+// On failure the outputs are left untouched.
 inline bool parseInput(std::string_view msg, float &angle, bool &boost) {
     if (msg.size() > kMaxInputBytes) return false;
     size_t comma = msg.find(',');
@@ -19,9 +19,9 @@ inline bool parseInput(std::string_view msg, float &angle, bool &boost) {
     const char *end = msg.data() + comma;
     float parsed = 0.f;
     auto [ptr, ec] = std::from_chars(begin, end, parsed);
-    if (ec != std::errc() || ptr != end) return false;  //not a clean number
+    if (ec != std::errc() || ptr != end) return false;  // not a clean number
     if (!std::isfinite(parsed) || std::fabs(parsed) > kMaxAbsAngle)
-        return false;  //NaN, inf, absurd
+        return false;  // NaN, inf, absurd
 
     std::string_view flag = msg.substr(comma + 1);
     if (flag != "0" && flag != "1") return false;

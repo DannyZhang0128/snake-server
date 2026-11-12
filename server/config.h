@@ -7,7 +7,7 @@
 #include <string_view>
 
 //---- Simulation timing ----
-//uSockets timers take whole milliseconds, so kTickHz must divide 1000 evenly
+// uSockets timers take whole milliseconds, so kTickHz must divide 1000 evenly
 //(20, 25, 40, 50, ...). Otherwise the real tick rate drifts away from kDt.
 constexpr int kTickHz = 20;
 static_assert(1000 % kTickHz == 0, "kTickHz must divide 1000 evenly");
@@ -18,8 +18,8 @@ constexpr int kTickIntervalMs = 1000 / kTickHz;
 constexpr int kDefaultPort = 9001;
 constexpr std::string_view kStateTopic = "state";
 
-//Websites allowed to open a WebSocket to us.
-//Override with the ALLOWED_ORIGINS environment variable.
+// Websites allowed to open a WebSocket to us.
+// Override with the ALLOWED_ORIGINS environment variable.
 constexpr std::string_view kDefaultAllowedOrigins = "http://localhost:8000,http://127.0.0.1:8000";
 
 //---- Input validation and connection limits ----
