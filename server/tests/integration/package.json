@@ -3,7 +3,7 @@
   "private": true,
   "description": "Starts the real server binary and talks to it over WebSocket.",
   "scripts": {
-    "test": "node --test integration.test.js"
+    "test": "node --test integration.test.js client.test.js"
   },
   "devDependencies": {
     "ws": "8.22.0"

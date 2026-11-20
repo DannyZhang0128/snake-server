@@ -23,6 +23,9 @@ let myId = null;
 const world = {w: 4000, h: 4000};
 let state = null;  //latest "state" message from the server
 let connected = false;
+let dead = false;              //true from our "dead" message until we are back in the world state
+let deadAt = 0;                //when we died, so a stray click can't respawn us instantly
+let camX = null, camY = null;  //last known head position, so the camera stays put after we die
 
 //receive-rate stats for the HUD
 let rxBytes = 0, rxMsgs = 0, rate = {kb: 0, msgs: 0};
@@ -32,11 +35,10 @@ setInterval(() => {
 }, 1000);
 
 //---------- network ----------
-//Server port: defaults to 9001, override with ex: http://localhost:8000/?port=9002
+// Server port: defaults to 9001, override with e.g. http://localhost:8000/?port=9002
 const portParam = new URLSearchParams(location.search).get("port");
 const port = /^\d{1,5}$/.test(portParam || "") ? portParam : "9001";
 const ws = new WebSocket("ws://" + location.hostname + ":" + port);
-
 ws.onopen = () => {connected = true;};
 ws.onclose = () => {connected = false;};
 ws.onmessage = (e) => {
@@ -48,6 +50,11 @@ ws.onmessage = (e) => {
   } 
   else if(m.t === "state") {
     state = m;
+    //a state that contains our snake after we died means the respawn worked
+    if(dead && m.snakes.some((s) => s.id === myId)) dead = false;
+  }
+  else if(m.t === "dead") {
+    if(m.id === myId && !dead) {dead = true; deadAt = performance.now();}
   }
 };
 
@@ -58,9 +65,21 @@ addEventListener("mousemove", (e) => {
   //so the direction is just the mouse offset from the center.
   angle = Math.atan2(e.clientY - canvas.height / 2, e.clientX - canvas.width / 2);
 });
-addEventListener("mousedown", () => {boost = true;});
+//a dead player clicks, or presses Space or Enter, to play again. the short delay stops the click
+//that was boosting when we died from respawning us instantly
+function tryRespawn() {
+  if(dead && performance.now() - deadAt > 800 && ws.readyState === WebSocket.OPEN) {
+    ws.send("respawn");
+  }
+}
+addEventListener("mousedown", () => {if(dead) tryRespawn(); else boost = true;});
 addEventListener("mouseup", () => {boost = false;});
-addEventListener("keydown", (e) => {if (e.code === "Space") { boost = true; e.preventDefault();}});
+addEventListener("keydown", (e) => {
+  if(e.code === "Space" || e.code === "Enter") {
+    if(dead) tryRespawn(); else if(e.code === "Space") boost = true;
+    e.preventDefault();
+  }
+});
 addEventListener("keyup", (e) => {if (e.code === "Space") boost = false;});
 
 //send the current input 20 times per second
@@ -78,10 +97,22 @@ function drawHud(me) {
   ctx.font = "14px monospace";
   const lines = [
     connected ? "connected" : "DISCONNECTED",
-    me ? "length: " + me.len : "waiting for server...",
+    me ? "length: " + me.len : dead ? "you died" : "waiting for server...",
     "rx: " + rate.msgs + " msg/s, " + rate.kb.toFixed(1) + " KB/s",
   ];
   lines.forEach((t, i) => ctx.fillText(t, 12, 20 + i * 18));
+
+  if(dead) {
+    ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#fff";
+    ctx.textAlign = "center";
+    ctx.font = "bold 40px monospace";
+    ctx.fillText("You died", canvas.width / 2, canvas.height / 2 - 10);
+    ctx.font = "18px monospace";
+    ctx.fillText("Click, or press Space or Enter, to play again", canvas.width / 2, canvas.height / 2 + 28);
+    ctx.textAlign = "left";
+  }
 }
 
 function draw() {
@@ -90,10 +121,10 @@ function draw() {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   const me = state && state.snakes.find((s) => s.id === myId);
-  if(!me) {drawHud(null); return;}
-
-  //Camera: keep our own head at the screen center.
-  const cx = me.p[0][0], cy = me.p[0][1];
+  //Camera: keep our own head at the screen center. after we die it stays where we died.
+  if(me) {camX = me.p[0][0]; camY = me.p[0][1];}
+  if(!state || camX === null) {drawHud(null); return;}  //nothing to draw yet
+  const cx = camX, cy = camY;
   const vx0 = cx - canvas.width / 2, vy0 = cy - canvas.height / 2;
   const vx1 = vx0 + canvas.width,    vy1 = vy0 + canvas.height;
 

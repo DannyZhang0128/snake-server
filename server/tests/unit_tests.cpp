@@ -13,7 +13,7 @@
 #include "origin.h"
 #include "world.h"
 
-//---------- helpers ----------
+// ---------- helpers ----------
 
 static const Snake &snakeById(const World &w, uint32_t id) {
     for (const auto &s : w.snakes()) {
@@ -35,15 +35,29 @@ static void feed(World &w, uint32_t id, int n) {
     w.tick(kDt);
 }
 
-// Steers the snake along a scripted wandering path until it has eaten enough food.
+// Steers the snake along a scripted wandering path until it has eaten enough food. It turns back
+// toward the middle of the map when it gets near a wall, so it never dies on the way.
 static void wanderUntilLength(World &w, uint32_t id, int targetLength) {
     for (int t = 0; t < 20000 && snakeById(w, id).length < targetLength; ++t) {
+        const auto head = snakeById(w, id).head;
         if (t % 20 == 0) w.setInput(id, std::sin(static_cast<float>(t) * 0.37f) * kPi, false);
+        const float margin = 600.f;
+        if (head.x < margin || head.x > World::kWidth - margin || head.y < margin ||
+            head.y > World::kHeight - margin) {
+            w.setInput(id, std::atan2(World::kHeight / 2 - head.y, World::kWidth / 2 - head.x),
+                       false);
+        }
         w.tick(kDt);
     }
 }
 
-//---------- World ----------
+// Ticks until the snake is dead (or maxTicks pass); returns true if it died.
+static bool tickUntilDead(World &w, uint32_t id, int maxTicks) {
+    for (int i = 0; i < maxTicks && snakeById(w, id).alive; ++i) w.tick(kDt);
+    return !snakeById(w, id).alive;
+}
+
+// ---------- World: basics ----------
 
 TEST_CASE("World: new snakes get unique ids, minimum length, and spawn inside the map") {
     World w;
@@ -78,6 +92,21 @@ TEST_CASE("World: input for an unknown snake id is ignored") {
     CHECK_FALSE(snakeById(w, a).boosting);
 }
 
+TEST_CASE("World: new snakes spawn away from living snakes") {
+    World w(1, 0);
+    uint32_t first = w.addSnakeAt({2000.f, 2000.f}, 0.f);
+    std::vector<uint32_t> ids = {first};
+    for (int i = 0; i < 10; ++i) ids.push_back(w.addSnake());
+    for (size_t i = 0; i < ids.size(); ++i) {
+        for (size_t j = i + 1; j < ids.size(); ++j) {
+            CHECK(distance(snakeById(w, ids[i]).head, snakeById(w, ids[j]).head) >=
+                  World::kSpawnClearance);
+        }
+    }
+}
+
+// ---------- World: movement ----------
+
 TEST_CASE("World: snake turns toward the target, limited by the turn rate") {
     World w;
     uint32_t id = w.addSnake();
@@ -91,26 +120,24 @@ TEST_CASE("World: snake turns the short way around when the target wraps past +-
     World w;
     uint32_t id = w.addSnake();
     float a0 = snakeById(w, id).angle;
-    //+3.5 rad is the same heading as -2.78 rad, so the short way is a negative turn.
+    // +3.5 rad is the same heading as -2.78 rad, so the short way is a negative turn.
     w.setInput(id, a0 + 3.5f, false);
     w.tick(kDt);
     CHECK(snakeById(w, id).angle - a0 == doctest::Approx(-World::kTurnRate * kDt));
 }
 
 TEST_CASE("World: snake settles exactly on the target heading") {
-    World w;
-    uint32_t id = w.addSnake();
-    float target = snakeById(w, id).angle + 1.0f;
-    w.setInput(id, target, false);
+    World w(1, 0);
+    uint32_t id = w.addSnakeAt({2000.f, 2000.f}, 0.f);
+    w.setInput(id, 1.0f, false);
     for (int i = 0; i < 60; ++i) w.tick(kDt);
-    CHECK(snakeById(w, id).angle == doctest::Approx(target).epsilon(1e-4));
+    CHECK(snakeById(w, id).angle == doctest::Approx(1.0f).epsilon(1e-4));
 }
 
 TEST_CASE("World: without boost a snake moves at base speed") {
     World w(1, 0);
-    uint32_t id = w.addSnake();
+    uint32_t id = w.addSnakeAt({2000.f, 2000.f}, 0.f);
     auto before = snakeById(w, id).head;
-    w.setInput(id, snakeById(w, id).angle, false);  // already facing this way: no turning
     w.tick(kDt);
     CHECK(distance(before, snakeById(w, id).head) ==
           doctest::Approx(World::kBaseSpeed * kDt).epsilon(1e-3));
@@ -118,15 +145,18 @@ TEST_CASE("World: without boost a snake moves at base speed") {
 
 TEST_CASE("World: boost is ignored at minimum length, so length never drops below it") {
     World w(1, 0);
-    uint32_t id = w.addSnake();
+    uint32_t id = w.addSnakeAt({500.f, 2000.f}, 0.f);
     auto before = snakeById(w, id).head;
-    w.setInput(id, snakeById(w, id).angle, true);
+    w.setInput(id, 0.f, true);
     w.tick(kDt);
     CHECK(distance(before, snakeById(w, id).head) ==
           doctest::Approx(World::kBaseSpeed * kDt).epsilon(1e-3));
-    for (int i = 0; i < 400; ++i) w.tick(kDt);
+    for (int i = 0; i < 150; ++i) w.tick(kDt);
+    CHECK(snakeById(w, id).alive);
     CHECK(snakeById(w, id).length == World::kMinLength);
 }
+
+// ---------- World: food and boost ----------
 
 TEST_CASE("World: eating food grows the snake and food is replenished") {
     World w;
@@ -145,10 +175,10 @@ TEST_CASE("World: each food item eaten adds exactly one length") {
 
 TEST_CASE("World: boosting a long snake moves at boost speed") {
     World w(1, 0);
-    uint32_t id = w.addSnake();
+    uint32_t id = w.addSnakeAt({2000.f, 2000.f}, 0.f);
     feed(w, id, 10);
     auto before = snakeById(w, id).head;
-    w.setInput(id, snakeById(w, id).angle, true);
+    w.setInput(id, 0.f, true);
     w.tick(kDt);
     CHECK(distance(before, snakeById(w, id).head) ==
           doctest::Approx(World::kBoostSpeed * kDt).epsilon(1e-3));
@@ -156,9 +186,9 @@ TEST_CASE("World: boosting a long snake moves at boost speed") {
 
 TEST_CASE("World: boosting costs about kBoostCostPerSec length per second") {
     World w(1, 0);
-    uint32_t id = w.addSnake();
+    uint32_t id = w.addSnakeAt({500.f, 2000.f}, 0.f);
     feed(w, id, 10);  // length 20
-    w.setInput(id, snakeById(w, id).angle, true);
+    w.setInput(id, 0.f, true);
     for (int i = 0; i < 50; ++i) w.tick(kDt);  // 2.5 s of boosting, costs about 5
     int length = snakeById(w, id).length;
     CHECK(length >= 15);  // 20 - 5, give or take one for float rounding
@@ -167,26 +197,147 @@ TEST_CASE("World: boosting costs about kBoostCostPerSec length per second") {
 
 TEST_CASE("World: boosting stops at the minimum length instead of going below it") {
     World w(1, 0);
-    uint32_t id = w.addSnake();
+    uint32_t id = w.addSnakeAt({500.f, 2000.f}, 0.f);
     feed(w, id, 10);
-    w.setInput(id, snakeById(w, id).angle, true);
-    for (int i = 0; i < 1000; ++i) w.tick(kDt);
+    w.setInput(id, 0.f, true);
+    for (int i = 0; i < 150; ++i) w.tick(kDt);  // far longer than it takes to run out
+    CHECK(snakeById(w, id).alive);
     CHECK(snakeById(w, id).length == World::kMinLength);
 }
 
-TEST_CASE("World: the head can never leave the map") {
-    World w;
-    uint32_t id = w.addSnake();
-    w.setInput(id, 0.f, false);  // head east for far longer than it takes to hit the wall
-    for (int i = 0; i < 2000; ++i) w.tick(kDt);
-    const Snake &s = snakeById(w, id);
-    CHECK(s.head.x <= World::kWidth);
-    CHECK(s.head.x == doctest::Approx(World::kWidth));
-    CHECK(s.head.y >= 0.f);
-    CHECK(s.head.y <= World::kHeight);
+// ---------- World: death ----------
+
+TEST_CASE("World: a snake dies when its head leaves the map") {
+    World w(1, 0);
+    uint32_t id = w.addSnakeAt({3900.f, 2000.f}, 0.f);  // heading east, 100 units from the wall
+    CHECK(tickUntilDead(w, id, 100));
+    CHECK(snakeById(w, id).head.x > World::kWidth);
 }
 
-//---------- parseInput ----------
+TEST_CASE("World: a dead snake stops moving and ignores input") {
+    World w(1, 0);
+    uint32_t id = w.addSnakeAt({3900.f, 2000.f}, 0.f);
+    REQUIRE(tickUntilDead(w, id, 100));
+    auto resting = snakeById(w, id).head;
+    w.setInput(id, kPi, true);
+    for (int i = 0; i < 10; ++i) w.tick(kDt);
+    CHECK(distance(resting, snakeById(w, id).head) == doctest::Approx(0.f));
+    CHECK_FALSE(snakeById(w, id).alive);
+}
+
+TEST_CASE("World: takeDeaths reports each death exactly once") {
+    World w(1, 0);
+    uint32_t id = w.addSnakeAt({3900.f, 2000.f}, 0.f);
+    CHECK(w.takeDeaths().empty());
+    REQUIRE(tickUntilDead(w, id, 100));
+    auto deaths = w.takeDeaths();
+    REQUIRE(deaths.size() == 1);
+    CHECK(deaths[0] == id);
+    CHECK(w.takeDeaths().empty());
+    for (int i = 0; i < 10; ++i) w.tick(kDt);  // already dead: must not die again
+    CHECK(w.takeDeaths().empty());
+}
+
+TEST_CASE("World: a dead snake drops one food item per body point, inside the map") {
+    World w(1, 0);
+    uint32_t id = w.addSnakeAt({3900.f, 2000.f}, 0.f);
+    feed(w, id, 5);  // 15 body points by the time it reaches the wall
+    REQUIRE(w.food().empty());
+    REQUIRE(tickUntilDead(w, id, 100));
+    CHECK(w.food().size() == snakeById(w, id).body.size());
+    for (const auto &f : w.food()) {
+        CHECK(f.x >= 0.f);
+        CHECK(f.x <= World::kWidth);
+        CHECK(f.y >= 0.f);
+        CHECK(f.y <= World::kHeight);
+    }
+}
+
+// ---------- World: snake-vs-snake collisions ----------
+
+TEST_CASE("World: a snake that runs into another snake's body dies, the other survives") {
+    World w(1, 0);
+    uint32_t victim = w.addSnakeAt({1000.f, 1000.f}, 0.f);         // heading east
+    uint32_t attacker = w.addSnakeAt({1050.f, 1100.f}, -kPi / 2);  // heading up, into its path
+    for (int i = 0; i < 30; ++i) w.tick(kDt);
+    CHECK_FALSE(snakeById(w, attacker).alive);
+    CHECK(snakeById(w, victim).alive);
+    auto deaths = w.takeDeaths();
+    REQUIRE(deaths.size() == 1);
+    CHECK(deaths[0] == attacker);
+}
+
+TEST_CASE("World: a head-on crash kills both snakes, whatever their order in the world") {
+    for (bool swapOrder : {false, true}) {
+        World w(1, 0);
+        uint32_t a, b;
+        if (!swapOrder) {
+            a = w.addSnakeAt({1000.f, 1000.f}, 0.f);
+            b = w.addSnakeAt({1200.f, 1000.f}, kPi);
+        } else {
+            b = w.addSnakeAt({1200.f, 1000.f}, kPi);
+            a = w.addSnakeAt({1000.f, 1000.f}, 0.f);
+        }
+        for (int i = 0; i < 30; ++i) w.tick(kDt);
+        CHECK_FALSE(snakeById(w, a).alive);
+        CHECK_FALSE(snakeById(w, b).alive);
+        CHECK(w.takeDeaths().size() == 2);
+    }
+}
+
+TEST_CASE("World: a snake never collides with its own body") {
+    World w(1, 0);
+    uint32_t id = w.addSnakeAt({1000.f, 2000.f}, 0.f);
+    feed(w, id, 30);
+    // the head is always within one step (10 units) of its own previous body points
+    for (int i = 0; i < 50; ++i) w.tick(kDt);
+    CHECK(snakeById(w, id).alive);
+}
+
+TEST_CASE("World: dead snakes are no longer obstacles") {
+    World w(1, 0);
+    uint32_t wallRunner = w.addSnakeAt({3900.f, 3000.f}, 0.f);
+    REQUIRE(tickUntilDead(w, wallRunner, 100));
+    // a new snake placed on top of the dead snake's old body must not crash
+    auto spot = snakeById(w, wallRunner).body[3];
+    uint32_t other = w.addSnakeAt(spot, 0.f);
+    w.tick(kDt);
+    CHECK(snakeById(w, other).alive);
+}
+
+// ---------- World: respawn ----------
+
+TEST_CASE("World: a dead snake can respawn with the same id at minimum length") {
+    World w(1, 0);
+    uint32_t id = w.addSnakeAt({3900.f, 2000.f}, 0.f);
+    feed(w, id, 5);
+    REQUIRE(tickUntilDead(w, id, 100));
+    CHECK(w.respawnSnake(id));
+    const Snake &s = snakeById(w, id);
+    CHECK(s.alive);
+    CHECK(s.length == World::kMinLength);
+    CHECK(s.body.size() == 1);
+    CHECK(s.head.x >= 0.f);
+    CHECK(s.head.x <= World::kWidth);
+    CHECK(s.head.y >= 0.f);
+    CHECK(s.head.y <= World::kHeight);
+    CHECK_FALSE(s.boosting);
+    w.tick(kDt);
+    CHECK(snakeById(w, id).alive);  // and it plays normally again
+}
+
+TEST_CASE("World: respawn does nothing for a living snake or an unknown id") {
+    World w(1, 0);
+    uint32_t id = w.addSnakeAt({2000.f, 2000.f}, 0.f);
+    feed(w, id, 5);
+    auto before = snakeById(w, id).head;
+    CHECK_FALSE(w.respawnSnake(id));
+    CHECK_FALSE(w.respawnSnake(9999));
+    CHECK(snakeById(w, id).length == World::kMinLength + 5);
+    CHECK(distance(before, snakeById(w, id).head) == doctest::Approx(0.f));
+}
+
+// ---------- parseInput ----------
 
 TEST_CASE("parseInput accepts well-formed input") {
     float angle = 0.f;
@@ -201,7 +352,7 @@ TEST_CASE("parseInput accepts well-formed input") {
     CHECK_FALSE(boost);
 
     CHECK(parseInput("0,0", angle, boost));
-    CHECK(parseInput("10,1", angle, boost));
+    CHECK(parseInput("10,1", angle, boost));  // exactly at the limit
 }
 
 TEST_CASE("parseInput rejects malformed or hostile input") {
@@ -233,7 +384,14 @@ TEST_CASE("parseInput leaves its outputs untouched when it fails") {
     CHECK(boost);
 }
 
-//---------- origin checks ----------
+TEST_CASE("isRespawnRequest accepts only the exact respawn message") {
+    CHECK(isRespawnRequest("respawn"));
+    for (const char *no : {"", "Respawn", "respawn ", " respawn", "respawn,1", "1.5,1"}) {
+        CHECK_MESSAGE(!isRespawnRequest(no), "should not match: '" << no << "'");
+    }
+}
+
+// ---------- origin checks ----------
 
 TEST_CASE("parseOriginList splits, trims, and skips empty entries") {
     auto v = parseOriginList(" http://a.example , http://b.example,, ");
