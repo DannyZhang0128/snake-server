@@ -8,8 +8,9 @@ A realtime multiplayer, Slither.io-style browser game. An authoritative C++ serv
 - Multiple players in one room; world state broadcast to all clients as JSON
 - Input validation at the network boundary (malformed input is dropped and counted)
 - Mouse steering, camera follow, and a HUD with connection status and bandwidth
+- Snake vs. snake collisions, deadly walls, drop food on death, respawns.
 
-**Not built yet:** snake-vs-snake collisions and death, client interpolation, binary protocol, interest management, bot load testing.
+**Not built yet:** client interpolation, binary protocol, interest management, bot load testing.
 
 ## Requirements
 
@@ -70,6 +71,8 @@ server/tests/       Unit tests (doctest) and integration tests (Node)
 | client to server | `angle,boost` (e.g. `1.571,1`) | Desired heading in radians and boost flag |
 | server to client | `{"t":"welcome","id":1,"w":4000,"h":4000}` | Sent once on connect: your snake id and map size |
 | server to client | `{"t":"state","snakes":[...],"food":[...]}` | World state, sent every tick |
+| client to server | respawn | Ask to play again after dying (ignored while alive) |
+| server to client | {"t":"dead","id":3} | Sent to everyone when snake 3 dies |
 
 Invalid input is ignored and counted. Messages over 64 bytes close the connection.
 
