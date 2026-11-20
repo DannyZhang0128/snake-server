@@ -1,34 +1,35 @@
 #pragma once
 // Central place for tunable values and environment-based settings.
-// Gameplay tuning (map size, speeds, food count) is in World (world.h).
+// Gameplay tuning (map size, speeds, food count) lives in World (world.h).
 
 #include <cstddef>
 #include <cstdlib>
 #include <string_view>
 
-//---- Simulation timing ----
+// ---- Simulation timing ----
 // uSockets timers take whole milliseconds, so kTickHz must divide 1000 evenly
-//(20, 25, 40, 50, ...). Otherwise the real tick rate drifts away from kDt.
+// (20, 25, 40, 50, ...). Otherwise the real tick rate drifts away from kDt.
 constexpr int kTickHz = 20;
 static_assert(1000 % kTickHz == 0, "kTickHz must divide 1000 evenly");
 constexpr float kDt = 1.0f / kTickHz;
 constexpr int kTickIntervalMs = 1000 / kTickHz;
 
-//---- Networking ----
+// ---- Networking ----
 constexpr int kDefaultPort = 9001;
 constexpr std::string_view kStateTopic = "state";
-
-// Websites allowed to open a WebSocket to us.
+// Text message a dead player sends to play again.
+constexpr std::string_view kRespawnMessage = "respawn";
+// Websites allowed to open a WebSocket to us (comma-separated, exact match).
 // Override with the ALLOWED_ORIGINS environment variable.
 constexpr std::string_view kDefaultAllowedOrigins = "http://localhost:8000,http://127.0.0.1:8000";
 
-//---- Input validation and connection limits ----
+// ---- Input validation and connection limits ----
 constexpr size_t kMaxInputBytes = 32;           // longest valid input is about 8 bytes
 constexpr float kMaxAbsAngle = 10.f;            // valid angles are within +/- pi
 constexpr unsigned int kMaxPayloadBytes = 64;   // uWebSockets closes connections that exceed this
 constexpr unsigned short kIdleTimeoutSec = 30;  // drop connections that go silent
 
-// Reads PORT from the environment, else uses the default.
+// Reads PORT from the environment (e.g. `PORT=9002 ./server`), else uses the default.
 inline int getPort() {
     const char *env = std::getenv("PORT");
     if (!env) return kDefaultPort;

@@ -15,13 +15,15 @@ int main() {
         world.addSnake();
     }
 
+    // The fixed seed is deliberate: it keeps runs reproducible.
     // generates rng, random angles and a number to determine fake players decisions
-    //  NOLINTNEXTLINE(bugprone-random-generator-seed)
+    // NOLINTNEXTLINE(bugprone-random-generator-seed)
     std::mt19937 rng(42);
     std::uniform_real_distribution<float> angleDist(-kPi, kPi), choice(0.f, 1.f);
 
     uint64_t tickCount = 0;
     double sumMs = 0.0, maxMs = 0.0;
+    uint64_t deaths = 0;  // deaths in the last reporting period
     auto next = clock::now();
 
     while (true) {
@@ -32,6 +34,11 @@ int main() {
             if (choice(rng) < 0.02f) world.setInput(s.id, angleDist(rng), choice(rng) < 0.3f);
         }
         world.tick(kt);
+        // a dead fake player comes straight back, so the benchmark keeps the same snake count
+        for (uint32_t id : world.takeDeaths()) {
+            world.respawnSnake(id);
+            deaths++;
+        }
 
         double ms = std::chrono::duration<double, std::milli>(clock::now() - t0).count();
         sumMs += ms;
@@ -46,9 +53,12 @@ int main() {
             }
 
             std::printf(
-                "tick %6llu | snakes %zu | food %zu | avg %.3f ms | max %.3f ms | longest %d\n",
+                "tick %6llu | snakes %zu | food %zu | avg %.3f ms | max %.3f ms | longest %d | "
+                "deaths %llu\n",
                 static_cast<unsigned long long>(tickCount), world.snakes().size(),
-                world.food().size(), sumMs / kTickHz, maxMs, longest);
+                world.food().size(), sumMs / kTickHz, maxMs, longest,
+                static_cast<unsigned long long>(deaths));
+            deaths = 0;
             sumMs = 0.0;
             maxMs = 0.0;
         }

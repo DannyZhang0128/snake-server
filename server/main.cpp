@@ -41,7 +41,7 @@ static void appendNum(std::string &s, T v) {
     s.append(tmp, r.ptr);
 }
 
-// Appends "[x,y]" with the coordinates truncated to integers.
+// Appends "[x,y]" with the coordinates truncated to integers (keeps messages smaller).
 static void appendPoint(std::string &out, float x, float y) {
     out += '[';
     appendNum(out, static_cast<int>(x));
@@ -86,6 +86,15 @@ static void onTick(struct us_timer_t *) {
 
     game.world.tick(kDt);
 
+    // tell everyone about the snakes that died this tick (each client checks if it was theirs)
+    for (uint32_t id : game.world.takeDeaths()) {
+        std::string msg = "{\"t\":\"dead\",\"id\":";
+        appendNum(msg, id);
+        msg += '}';
+        game.app->publish(kStateTopic, msg, uWS::OpCode::TEXT);
+        logMsg(LogLevel::Info, "player %u died", id);
+    }
+
     if (!game.world.snakes().empty()) {
         buildState(game.buf, game.world);
         game.app->publish(kStateTopic, game.buf, uWS::OpCode::TEXT);  // one send to all subscribers
@@ -122,7 +131,7 @@ int main() {
              [](auto *res, auto *req, auto *context) {
                  std::string_view origin = req->getHeader("origin");
                  if (!isOriginAllowed(origin, game.allowedOrigins)) {
-                     // Log at most 100 characters of the header.
+                     // Log at most 100 characters of the (client-controlled) header.
                      std::string shown(origin.substr(0, 100));
                      logMsg(LogLevel::Warn, "rejected connection from origin '%s'", shown.c_str());
                      res->writeStatus("403 Forbidden")->end("Origin not allowed");
@@ -152,6 +161,11 @@ int main() {
          .message =
              [](auto *ws, std::string_view msg, uWS::OpCode op) {
                  if (op != uWS::OpCode::TEXT) return;
+                 if (isRespawnRequest(msg)) {
+                     // ignored unless this connection's snake is dead
+                     game.world.respawnSnake(ws->getUserData()->snakeId);
+                     return;
+                 }
                  float angle = 0.f;
                  bool boost = false;
                  if (!parseInput(msg, angle, boost)) {

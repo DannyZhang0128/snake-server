@@ -7,7 +7,7 @@
 
 #include "config.h"
 
-// Input format: "<angle>,<0|1>"
+// Input format: "<angle>,<0|1>"  e.g. "1.5708,1"
 // Returns true and fills angle/boost only if the whole message is valid.
 // On failure the outputs are left untouched.
 inline bool parseInput(std::string_view msg, float &angle, bool &boost) {
@@ -30,3 +30,6 @@ inline bool parseInput(std::string_view msg, float &angle, bool &boost) {
     boost = (flag == "1");
     return true;
 }
+
+// A dead player asks to play again with the text message "respawn".
+inline bool isRespawnRequest(std::string_view msg) { return msg == kRespawnMessage; }
